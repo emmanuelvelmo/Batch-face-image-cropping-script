@@ -1,175 +1,216 @@
-import os
-import shutil
-import pathlib
-import collections
-import cv2
-import numpy as np
+import collections # defaultdict para agrupar archivos por carpeta
+import pathlib # Manejo moderno de rutas de archivos y directorios
+import cv2 # OpenCV: lectura de imágenes, detección de rostros, guardado
+import numpy # Operaciones con arrays numéricos (coordenadas de rostros)
 
-# Generar un nombre de directorio único para evitar sobreescribir
-def f_directorio_salida():
-    contador_val = 1
-    directorio_salida = ""
+# FUNCIONES
+# Guarda las imágenes de rostros recortados con nomenclatura apropiada
+def guardar_rostros(dir_imagen, rostros_imgs, carpeta_destino, directorio_salida):
+    # Crear directorio de salida si no existe
+    pathlib.Path(directorio_salida).mkdir(exist_ok = True)
 
-    while True:
-        directorio_salida = f"Faces Output ({contador_val})"
-        if not pathlib.Path(directorio_salida).exists():
-            break
-        contador_val += 1
-
-    return directorio_salida
-
-# Agrupar archivos por carpeta
-def f_agrupar_por_carpeta(directorio_capt, extensiones):
-    archivos_por_carpeta = collections.defaultdict(list)
+    # Extraer nombre base y extensión del archivo original
+    nombre_archivo = dir_imagen.stem
+    extension_archivo = dir_imagen.suffix.lower()
     
-    for ext in extensiones:
-        for entrada in pathlib.Path(directorio_capt).rglob(f'*.{ext}'):
-            if entrada.is_file():
-                carpeta_padre = entrada.parent
-                archivos_por_carpeta[carpeta_padre].append(entrada)
+    cont_rostros = 0 # Contador de archivos guardados
     
-    return archivos_por_carpeta
+    # Lógica de nomenclatura según cantidad de rostros detectados
+    if len(rostros_imgs) == 1:
+        # Un solo rostro: mantener nombre original
+        cv2.imwrite(str(carpeta_destino / f"{nombre_archivo}{extension_archivo}"), rostros_imgs[0]) # Guardar imagen de rostro
+        
+        cont_rostros += 1
+    elif len(rostros_imgs) > 1:
+        # Múltiples rostros: agregar numeración secuencial
+        for indice_val, rostro_iter in enumerate(rostros_imgs, 1):
+            cv2.imwrite(str(carpeta_destino / f"{nombre_archivo}({indice_val}){extension_archivo}"), rostro_iter) # Guardar imagen de rostro
+            
+            cont_rostros += 1
+    
+    return cont_rostros
 
-def cargar_modelo_dnn():
-    """Carga el modelo DNN desde el directorio actual"""
-    config_file = "deploy.prototxt"
-    model_file = "res10_300x300_ssd_iter_140000_fp16.caffemodel"
+# Detecta rostros en una imagen usando red neuronal DNN con umbral de confianza
+def coordenadas_rostros(imagen_val, modelo_dnn):
+    alto_val, ancho_val = imagen_val.shape[:2] # Obtener dimensiones de la imagen original
     
-    if not os.path.exists(config_file) or not os.path.exists(model_file):
-        raise FileNotFoundError("Archivos del modelo DNN no encontrados en el directorio actual")
+    # Crear blob: redimensionar imagen a 300x300 y normalizar valores de píxeles
+    blob_val = cv2.dnn.blobFromImage(cv2.resize(imagen_val, (300, 300)), 1.0, (300, 300), [104, 117, 123])
     
-    return cv2.dnn.readNetFromCaffe(config_file, model_file)
-
-def detectar_rostros_dnn(img, net):
-    """Detecta rostros usando el modelo DNN"""
-    h, w = img.shape[:2]
-    blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 1.0,
-                                (300, 300), [104, 117, 123])
-    net.setInput(blob)
-    detections = net.forward()
+    modelo_dnn.setInput(blob_val) # Establecer blob como entrada de la red neuronal
     
-    rostros = []
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
-        if confidence > 0.7:  # Umbral de confianza
-            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            (x1, y1, x2, y2) = box.astype("int")
+    detecciones_val = modelo_dnn.forward() # Ejecutar inferencia y obtener detecciones
+    
+    rostros_coords = [] # Lista para almacenar coordenadas de rostros válidos
+    
+    # Procesar cada detección encontrada por la red neuronal
+    for iter_val in range(detecciones_val.shape[2]):
+        # Extraer nivel de confianza de la detección actual
+        umbral_confianza = detecciones_val[0, 0, iter_val, 2]
+        
+        # Filtrar detecciones con confianza mayor al umbral (70%)
+        if umbral_confianza > 0.7: # Umbral de confianza para reducir falsos positivos
+            # Extraer coordenadas del rostro y escalar a dimensiones originales
+            caja = detecciones_val[0, 0, iter_val, 3:7] * numpy.array([ancho_val, alto_val, ancho_val, alto_val])
+            
+            # Convertir coordenadas flotantes a enteros
+            (x1, y1, x2, y2) = caja.astype("int")
+            
+            # Asegurar que las coordenadas estén dentro de los límites de la imagen
             x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
-            rostros.append((x1, y1, x2-x1, y2-y1))
+            x2, y2 = min(ancho_val, x2), min(alto_val, y2)
+            
+            # Convertir formato de coordenadas (x1,y1,x2,y2) a (x, y, ancho, alto)
+            rostros_coords.append((x1, y1, x2-x1, y2-y1))
     
-    return rostros
+    return rostros_coords
 
-def procesar_imagen(imagen_path, modelo_dnn):
-    """Procesa la imagen usando el modelo DNN"""
-    img = cv2.imread(str(imagen_path))
-    if img is None:
-        return []
+# Procesa una imagen individual: carga, detecta rostros y recorta con márgenes
+def recortar_rostros(ruta_imagen, modelo_dnn):
+    # Cargar imagen desde archivo usando OpenCV
+    imagen_val = cv2.imread(str(ruta_imagen))
     
     try:
-        rostros = detectar_rostros_dnn(img, modelo_dnn)
+        # Ejecutar detección de rostros en la imagen
+        rostros_coordenadas = coordenadas_rostros(imagen_val, modelo_dnn)
     except Exception as e:
-        print(f"Error al procesar {imagen_path}: {str(e)}")
         return []
+
+    # Lista para almacenar imágenes recortadas de rostros
+    rostros_imagenes = []
     
-    rostros_recortados = []
-    for (x, y, w, h) in rostros:
-        margen_w = int(w * 0.2)
-        margen_h = int(h * 0.2)
-        x1 = max(0, x - margen_w)
-        y1 = max(0, y - margen_h)
-        x2 = min(img.shape[1], x + w + margen_w)
-        y2 = min(img.shape[0], y + h + margen_h)
+    # Recortar cada rostro detectado con márgenes adicionales
+    for (x, y, w, h) in rostros_coordenadas:
+        # Calcular márgenes (20% del tamaño del rostro para mejor encuadre)
+        margen_horizontal = int(w * 0.2)
+        margen_vertical = int(h * 0.2)
         
-        rostro = img[y1:y2, x1:x2]
-        rostros_recortados.append(rostro)
+        # Calcular coordenadas expandidas con márgenes
+        x1 = max(0, x - margen_horizontal)
+        y1 = max(0, y - margen_vertical)
+        x2 = min(imagen_val.shape[1], x + w + margen_horizontal)
+        y2 = min(imagen_val.shape[0], y + h + margen_vertical)
+        
+        # Recortar región del rostro con márgenes de la imagen original
+        rostro_recortado = imagen_val[y1:y2, x1:x2]
+        
+        # Agregar imagen al array de imágenes de rostros
+        rostros_imagenes.append(rostro_recortado)
     
-    return rostros_recortados
+    return rostros_imagenes
 
-def guardar_rostros(imagen_path, rostros, carpeta_destino):
-    nombre_base = imagen_path.stem
-    extension = imagen_path.suffix.lower()
-    
-    archivos_guardados = []
-    
-    if len(rostros) == 1:
-        nombre_archivo = f"{nombre_base}{extension}"
-        destino = carpeta_destino / nombre_archivo
-        cv2.imwrite(str(destino), rostros[0])
-        archivos_guardados.append(destino)
-    elif len(rostros) > 1:
-        for i, rostro in enumerate(rostros, 1):
-            nombre_archivo = f"{nombre_base}({i}){extension}"
-            destino = carpeta_destino / nombre_archivo
-            cv2.imwrite(str(destino), rostro)
-            archivos_guardados.append(destino)
-    
-    return archivos_guardados
-
-def f_procesar_imagenes(directorio_capt, archivos_por_carpeta, directorio_salida):
-    total_rostros = 0
+# Procesamiento de imágenes y guardado de resultados
+def procesar_directorio_imagenes(directorio_entrada, lista_carpetas_archivos, directorio_salida, modelo_dnn):
+    # Contadores
+    total_rostros_extraidos = 0
     total_imagenes_procesadas = 0
     
-    try:
-        modelo_dnn = cargar_modelo_dnn()
-        print("Modelo DNN cargado correctamente - usando detección de alta precisión")
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        return 0, 0
-
-    for carpeta_origen, archivos in archivos_por_carpeta.items():
-        ruta_relativa = os.path.relpath(carpeta_origen, directorio_capt)
-        carpeta_destino = pathlib.Path(directorio_salida) / ruta_relativa
-        carpeta_destino.mkdir(parents=True, exist_ok=True)
+    # Procesar cada carpeta y sus archivos de imagen
+    for iter_carpeta, lista_archivos in lista_carpetas_archivos.items():
+        # Generar ruta relativa para mantener estructura de directorios
+        carpeta_destino = pathlib.Path(directorio_salida) / pathlib.Path(iter_carpeta).relative_to(pathlib.Path(directorio_entrada))
         
-        for imagen_path in archivos:
-            rostros = procesar_imagen(imagen_path, modelo_dnn)
-            if rostros:
-                guardados = guardar_rostros(imagen_path, rostros, carpeta_destino)
-                total_rostros += len(guardados)
-                total_imagenes_procesadas += 1
+        # Crear carpeta de destino si no existe
+        carpeta_destino.mkdir(parents = True, exist_ok = True)
+        
+        # Procesar cada imagen individual de la carpeta actual
+        for dir_imagen in lista_archivos:
+            # Extraer rostros de la imagen actual
+            rostros_encontrados = recortar_rostros(dir_imagen, modelo_dnn)
+            
+            # Guardar rostros si se encontró alguno
+            if rostros_encontrados:
+                total_rostros_extraidos += guardar_rostros(dir_imagen, rostros_encontrados, carpeta_destino, directorio_salida)
+                
+            total_imagenes_procesadas += 1
     
-    return total_rostros, total_imagenes_procesadas
+    return total_imagenes_procesadas, total_rostros_extraidos
 
-def main():
-    extensiones_soportadas = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp']
+# Organiza archivos de imagen agrupándolos por carpeta (búsqueda recursiva)
+def agrupar_archivos_carpetas(directorio_origen, extensiones_lista):
+    # Diccionario para carpetas y archivos de la misma
+    dicc_carpetas_archivos = collections.defaultdict(list)
     
-    print("=== Detector de Rostros con Modelo DNN ===")
-    print("Asegúrate de tener estos archivos en el mismo directorio:")
-    print("- deploy.prototxt")
-    print("- res10_300x300_ssd_iter_140000_fp16.caffemodel\n")
+    # Buscar archivos para cada extensión de imagen soportada
+    for extension_val in extensiones_lista:
+        # Búsqueda recursiva en todas las subcarpetas usando patrón glob
+        for archivo_iter in pathlib.Path(directorio_origen).rglob(f'*.{extension_val}'):
+            # Verificar que sea un archivo válido y no un directorio
+            if archivo_iter.is_file():
+                carpeta_contenedora = archivo_iter.parent
+                
+                dicc_carpetas_archivos[carpeta_contenedora].append(archivo_iter)
     
+    return dicc_carpetas_archivos
+
+# Inicializa el modelo de red neuronal DNN para detección de rostros
+def cargar_modelo_dnn():
+    # Buscar el primer archivo prototxt en el directorio actual (no recursivo)
+    archivo_configuracion = None
+    
+    for archivo_iter in pathlib.Path('.').glob('*.prototxt'):
+        archivo_configuracion = str(archivo_iter)
+        
+        break
+    
+    # Buscar el primer archivo caffemodel solo en el directorio actual (no recursivo)
+    archivo_pesos_modelo = None
+    
+    for archivo_iter in pathlib.Path('.').glob('*.caffemodel'):
+        archivo_pesos_modelo = str(archivo_iter)
+        
+        break
+    
+    # Cargar y retornar modelo
+    return cv2.dnn.readNetFromCaffe(archivo_configuracion, archivo_pesos_modelo)
+
+# PUNTO DE PARTIDA
+# Lista de formatos de imagen soportados por OpenCV
+extensiones_lista = ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp', 'gif', 'heic']
+
+try:
+    # Cargar archivos para modelo
+    modelo_dnn = cargar_modelo_dnn()
+    
+    # Bucle principal del programa
     while True:
-        # Directorio de entrada
+        # Solicitar directorio de entrada
         while True:
-            directorio_capt = input("Ingrese el directorio con imágenes (o 'q' para salir): ").strip()
-            if directorio_capt.lower() == 'q':
-                return
-            if pathlib.Path(directorio_capt).exists():
+            directorio_entrada = input("Enter directory: ").strip('"\'')
+            
+            # Verificar que el directorio exista
+            if not pathlib.Path(directorio_entrada).exists():
+                print("Wrong directory\n")
+            else:
                 break
-            print("¡Directorio no encontrado!")
         
-        # Obtener directorio de salida
-        directorio_salida = f_directorio_salida()
-        pathlib.Path(directorio_salida).mkdir()
-        
-        # Agrupar archivos por carpeta
-        archivos_por_carpeta = f_agrupar_por_carpeta(directorio_capt, extensiones_soportadas)
-        
-        # Procesar imágenes
-        total_rostros, total_imagenes = f_procesar_imagenes(
-            directorio_capt, archivos_por_carpeta, directorio_salida)
-        
-        print("\n" + "="*50)
-        print(f"Imágenes procesadas: {total_imagenes}")
-        print(f"Rostros detectados: {total_rostros}")
-        
-        if total_rostros > 0:
-            print(f"Resultados guardados en: {os.path.abspath(directorio_salida)}")
-        else:
-            shutil.rmtree(directorio_salida)
-            print("No se detectaron rostros en las imágenes")
-        print("="*50 + "\n")
+        # Generar nombre para directorio de salida
+        directorio_salida = f"{pathlib.Path(directorio_entrada).name} (output)"
 
-if __name__ == "__main__":
-    main()
+        # Generar lista de directorios de imágenes en carpeta de entrada
+        lista_carpetas_archivos = agrupar_archivos_carpetas(directorio_entrada, extensiones_lista)
+        
+        # Ejecutar detección, extracción y guarado de rostros
+        total_imagenes, total_rostros = procesar_directorio_imagenes(directorio_entrada, lista_carpetas_archivos, directorio_salida, modelo_dnn)
+        
+        # Mostrar separador visual para resultados
+        print("-" * 36)
+        
+        # Mostrar resultados de procesamiento
+        if total_imagenes > 0:
+            print(f"Processed images: {total_imagenes}")
+            
+            # Mostrar cantidad de rostros sólo si se encontró alguno
+            if total_rostros > 0:
+                print(f"Processed faces: {total_rostros}")
+            else:
+                print("No faces found")
+        else:
+            print("No images found")
+        
+        print("-" * 36 + "\n")
+except Exception as e:
+    print("No model found")
+        
+    # Detener el programa
+    input()
