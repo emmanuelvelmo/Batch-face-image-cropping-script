@@ -61,7 +61,7 @@ def coordenadas_rostros(imagen_val, modelo_dnn):
             x2, y2 = min(ancho_val, x2), min(alto_val, y2)
             
             # Convertir formato de coordenadas (x1,y1,x2,y2) a (x, y, ancho, alto)
-            rostros_coords.append((x1, y1, x2-x1, y2-y1))
+            rostros_coords.append((x1, y1, x2 - x1, y2 - y1))
     
     return rostros_coords
 
@@ -80,16 +80,16 @@ def recortar_rostros(ruta_imagen, modelo_dnn):
     rostros_imagenes = []
     
     # Recortar cada rostro detectado con márgenes adicionales
-    for (x, y, w, h) in rostros_coordenadas:
+    for (x_it, y_it, w_it, h_it) in rostros_coordenadas:
         # Calcular márgenes (20% del tamaño del rostro para mejor encuadre)
-        margen_horizontal = int(w * 0.2)
-        margen_vertical = int(h * 0.2)
+        margen_horizontal = int(w_it * 0.2)
+        margen_vertical = int(h_it * 0.2)
         
         # Calcular coordenadas expandidas con márgenes
-        x1 = max(0, x - margen_horizontal)
-        y1 = max(0, y - margen_vertical)
-        x2 = min(imagen_val.shape[1], x + w + margen_horizontal)
-        y2 = min(imagen_val.shape[0], y + h + margen_vertical)
+        x1 = max(0, x_it - margen_horizontal)
+        y1 = max(0, y_it - margen_vertical)
+        x2 = min(imagen_val.shape[1], x_it + w_it + margen_horizontal)
+        y2 = min(imagen_val.shape[0], y_it + h_it + margen_vertical)
         
         # Recortar región del rostro con márgenes de la imagen original
         rostro_recortado = imagen_val[y1:y2, x1:x2]
