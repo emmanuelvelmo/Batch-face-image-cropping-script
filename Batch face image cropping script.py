@@ -210,7 +210,7 @@ try:
         
         print("-" * 36 + "\n")
 except Exception as e:
-    print("No model found")
+    print("Model files not found")
         
     # Detener el programa
     input()
