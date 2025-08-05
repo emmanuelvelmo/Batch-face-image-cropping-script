@@ -51,10 +51,10 @@ def coordenadas_rostros(imagen_val, modelo_dnn):
         # Filtrar detecciones con confianza mayor al umbral (70%)
         if umbral_confianza > 0.7: # Umbral de confianza para reducir falsos positivos
             # Extraer coordenadas del rostro y escalar a dimensiones originales
-            caja = detecciones_val[0, 0, iter_val, 3:7] * numpy.array([ancho_val, alto_val, ancho_val, alto_val])
+            caja_val = detecciones_val[0, 0, iter_val, 3:7] * numpy.array([ancho_val, alto_val, ancho_val, alto_val])
             
             # Convertir coordenadas flotantes a enteros
-            (x1, y1, x2, y2) = caja.astype("int")
+            (x1, y1, x2, y2) = caja_val.astype("int")
             
             # Asegurar que las coordenadas estén dentro de los límites de la imagen
             x1, y1 = max(0, x1), max(0, y1)
