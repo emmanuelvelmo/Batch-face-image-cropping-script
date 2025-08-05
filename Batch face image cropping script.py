@@ -60,7 +60,7 @@ def coordenadas_rostros(imagen_val, modelo_dnn):
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(ancho_val, x2), min(alto_val, y2)
             
-            # Convertir formato de coordenadas (x1,y1,x2,y2) a (x, y, ancho, alto)
+            # Convertir formato de coordenadas (x1, y1, x2, y2) a (x, y, ancho, alto)
             rostros_coords.append((x1, y1, x2 - x1, y2 - y1))
     
     return rostros_coords
@@ -92,7 +92,7 @@ def recortar_rostros(ruta_imagen, modelo_dnn):
         y2 = min(imagen_val.shape[0], y_it + h_it + margen_vertical)
         
         # Recortar región del rostro con márgenes de la imagen original
-        rostro_recortado = imagen_val[y1:y2, x1:x2]
+        rostro_recortado = imagen_val[y1 : y2, x1 : x2]
         
         # Agregar imagen al array de imágenes de rostros
         rostros_imagenes.append(rostro_recortado)
