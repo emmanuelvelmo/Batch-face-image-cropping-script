@@ -189,12 +189,12 @@ try:
 
         # Generar lista de directorios de imágenes en carpeta de entrada
         lista_carpetas_archivos = agrupar_archivos_carpetas(directorio_entrada, extensiones_lista)
+
+        # Mostrar separador visual para resultados
+        print("-" * 36)
         
         # Ejecutar detección, extracción y guarado de rostros
         total_imagenes, total_rostros = procesar_directorio_imagenes(directorio_entrada, lista_carpetas_archivos, directorio_salida, modelo_dnn)
-        
-        # Mostrar separador visual para resultados
-        print("-" * 36)
         
         # Mostrar resultados de procesamiento
         if total_imagenes > 0:
